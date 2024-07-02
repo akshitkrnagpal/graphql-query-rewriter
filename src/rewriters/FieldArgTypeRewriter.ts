@@ -4,6 +4,7 @@ import {
   FieldNode,
   isValueNode,
   Kind,
+  ObjectFieldNode,
   parseType,
   TypeNode,
   ValueNode,
@@ -15,6 +16,7 @@ import { identifyFunc } from '../utils';
 import Rewriter, { RewriterOpts, Variables } from './Rewriter';
 
 interface FieldArgTypeRewriterOpts extends RewriterOpts {
+  root?: string;
   argName: string;
   oldType: string;
   newType: string;
@@ -37,6 +39,7 @@ interface FieldArgTypeRewriterOpts extends RewriterOpts {
  */
 class FieldArgTypeRewriter extends Rewriter {
   protected argName: string;
+  protected root?: string;
   protected oldTypeNode: TypeNode;
   protected newTypeNode: TypeNode;
   // Passes context with rest of arguments and variables.
@@ -55,11 +58,24 @@ class FieldArgTypeRewriter extends Rewriter {
 
   constructor(options: FieldArgTypeRewriterOpts) {
     super(options);
+    this.root = options.root;
     this.argName = options.argName;
     this.oldTypeNode = parseType(options.oldType);
     this.newTypeNode = parseType(options.newType);
     this.coerceVariable = options.coerceVariable || identifyFunc;
     this.coerceArgumentValue = options.coerceArgumentValue || identifyFunc;
+  }
+
+  private getMatchingArgument(node: FieldNode) {
+    if (this.root) {
+      const rootNode = (node.arguments || []).find(arg => arg.name.value === this.root);
+      if (!rootNode) return undefined;
+      if (rootNode.value.kind === 'ObjectValue') {
+        return rootNode.value.fields.find(field => field.name.value === this.argName);
+      }
+    } else {
+      return (node.arguments || []).find(arg => arg.name.value === this.argName);
+    }
   }
 
   public matches(nodeAndVars: NodeAndVarDefs, parents: ASTNode[]) {
@@ -72,8 +88,7 @@ class FieldArgTypeRewriter extends Rewriter {
     // does this field contain arguments?
     if (!node.arguments) return false;
 
-    // is there an argument with the correct name and type in a variable?
-    const matchingArgument = node.arguments.find(arg => arg.name.value === this.argName);
+    const matchingArgument = this.getMatchingArgument(node);
 
     if (!matchingArgument) return false;
 
@@ -118,7 +133,7 @@ class FieldArgTypeRewriter extends Rewriter {
       return { node, variableDefinitions: newVarDefs };
     }
     // If argument value is not stored in a variable but in the query node.
-    const matchingArgument = (node.arguments || []).find(arg => arg.name.value === this.argName);
+    const matchingArgument = this.getMatchingArgument(node);
     if (node.arguments && matchingArgument) {
       const args = [...node.arguments];
       const newValue = this.coerceArgumentValue(matchingArgument.value, { variables, args });
@@ -151,9 +166,7 @@ class FieldArgTypeRewriter extends Rewriter {
   }
 
   private extractMatchingVarRefName(node: FieldNode) {
-    const matchingArgument = (node.arguments || []).find(
-      arg => arg.name.value === this.argName
-    ) as ArgumentNode;
+    const matchingArgument = this.getMatchingArgument(node)!;
     const variableNode = matchingArgument.value as VariableNode;
     return variableNode.kind === Kind.VARIABLE && variableNode.name.value;
   }
